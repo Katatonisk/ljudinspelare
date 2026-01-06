@@ -119,6 +119,11 @@
             const [currentTime, setCurrentTime] = useState(0);
             const [duration, setDuration] = useState(0);
             const [recordingLevels, setRecordingLevels] = useState({});
+            const [echoCancellation, setEchoCancellation] = useState(false);
+            const [autoGainControl, setAutoGainControl] = useState(false);
+            const [showMetronomeSettings, setShowMetronomeSettings] = useState(false);
+            const [showAudioSettings, setShowAudioSettings] = useState(false);
+            const [exportFileName, setExportFileName] = useState('');
             
             const mediaRecorderRef = useRef(null);
             const audioChunksRef = useRef([]);
@@ -183,9 +188,9 @@
                 try {
                     const stream = await navigator.mediaDevices.getUserMedia({ 
                         audio: {
-                            echoCancellation: false,
+                            echoCancellation: echoCancellation,
                             noiseSuppression: false,
-                            autoGainControl: false
+                            autoGainControl: autoGainControl
                         } 
                     });
                     stream.getTracks().forEach(track => track.stop());
@@ -254,32 +259,8 @@
                     if (!granted) return;
                 }
 
-                // Starta inräkning om metronom är aktiverad
-                if (countIn && metronomeEnabled) {
-                    setIsCountingIn(true);
-                    setMetronomeActive(true);
-                    countInBeatRef.current = 0;
-                    const beatsPerMeasure = getBeatsPerMeasure();
-                    
-                    const doCountIn = () => {
-                        const isFirstBeat = countInBeatRef.current % beatsPerMeasure === 0;
-                        playMetronomeClick(isFirstBeat);
-                        setCurrentBeat(countInBeatRef.current);
-                        countInBeatRef.current++;
-                        
-                        if (countInBeatRef.current < beatsPerMeasure) {
-                            const interval = (60 / bpm) * 1000;
-                            metronomeTimeoutRef.current = setTimeout(doCountIn, interval);
-                        } else {
-                            // Inräkning klar, starta inspelning
-                            setIsCountingIn(false);
-                            actuallyStartRecording(trackId);
-                        }
-                    };
-                    
-                    doCountIn();
-                } else if (metronomeEnabled) {
-                    // Starta metronom direkt utan inräkning
+                // Starta metronom direkt om den är aktiverad
+                if (metronomeEnabled) {
                     setMetronomeActive(true);
                     actuallyStartRecording(trackId);
                 } else {
@@ -296,9 +277,9 @@
                 try {
                     const stream = await navigator.mediaDevices.getUserMedia({ 
                         audio: {
-                            echoCancellation: false,
+                            echoCancellation: echoCancellation,
                             noiseSuppression: false,
-                            autoGainControl: false
+                            autoGainControl: autoGainControl
                         } 
                     });
                     const mediaRecorder = new MediaRecorder(stream);
@@ -654,6 +635,10 @@
                     return;
                 }
 
+                // Be om filnamn
+                const defaultName = `inspelning-${new Date().toISOString().slice(0, 10)}`;
+                const fileName = exportFileName.trim() || defaultName;
+
                 let maxLength = 0;
                 tracksWithAudio.forEach(track => {
                     const buffer = audioBuffersRef.current[track.id];
@@ -692,9 +677,12 @@
                 const url = URL.createObjectURL(wavBlob);
                 const a = document.createElement('a');
                 a.href = url;
-                a.download = `inspelning-${Date.now()}.wav`;
+                a.download = `${fileName}.wav`;
                 a.click();
                 URL.revokeObjectURL(url);
+                
+                // Rensa filnamn efter export
+                setExportFileName('');
             };
 
             const bufferToWave = (buffer, length) => {
@@ -742,20 +730,20 @@
             };
 
             return (
-                <div className="min-h-screen bg-gradient-to-br from-purple-900 via-blue-900 to-indigo-900 p-4">
+                <div className="min-h-screen bg-gradient-to-br from-gray-900 via-gray-800 to-black p-4">
                     <div className="max-w-2xl mx-auto">
-                        <div className="bg-white/10 backdrop-blur-lg rounded-2xl shadow-2xl p-6 mb-6">
+                        <div className="bg-gray-800/90 backdrop-blur-lg rounded-2xl shadow-2xl p-6 mb-6 border border-gray-700">
                             <h1 className="text-3xl font-bold text-white mb-2">4-kanals Ljudinspelare</h1>
-                            <p className="text-blue-200 text-sm">Spela in musik-idéer direkt i din mobil</p>
+                            <p className="text-gray-400 text-sm">Spela in musik-idéer direkt i din mobil</p>
                         </div>
 
                         <div className="space-y-4 mb-6">
                             {tracks.map(track => (
-                                <div key={track.id} className="bg-white/10 backdrop-blur-lg rounded-xl p-4">
+                                <div key={track.id} className="bg-gray-800/90 backdrop-blur-lg rounded-xl p-4 border border-gray-700">
                                     <div className="flex items-center justify-between mb-3">
                                         {!track.editing ? (
                                             <h3 
-                                                className="text-white font-semibold cursor-pointer hover:text-blue-300 transition"
+                                                className="text-white font-semibold cursor-pointer hover:text-gray-300 transition"
                                                 onClick={() => startEditingName(track.id)}
                                             >
                                                 {track.name}
@@ -771,7 +759,7 @@
                                                         updateTrackName(track.id, e.target.value);
                                                     }
                                                 }}
-                                                className="bg-white/20 text-white px-2 py-1 rounded border-2 border-blue-400 outline-none"
+                                                className="bg-gray-700 text-white px-2 py-1 rounded border-2 border-gray-500 outline-none"
                                             />
                                         )}
                                         <div className="flex gap-2">
@@ -787,7 +775,7 @@
                                             {!track.recording && !track.hasAudio && (
                                                 <button
                                                     onClick={() => startRecording(track.id)}
-                                                    className="bg-red-500 hover:bg-red-600 text-white p-2 rounded-lg transition"
+                                                    className="bg-red-600 hover:bg-red-700 text-white p-2 rounded-lg transition"
                                                 >
                                                     <Mic />
                                                 </button>
@@ -813,7 +801,7 @@
                                     
                                     {track.hasAudio && (
                                         <div className="flex items-center gap-3">
-                                            <span className="text-blue-200 text-sm min-w-[60px]">Volym:</span>
+                                            <span className="text-gray-400 text-sm min-w-[60px]">Volym:</span>
                                             <input
                                                 type="range"
                                                 min="0"
@@ -847,109 +835,145 @@
                             ))}
                         </div>
 
-                        <div className="bg-white/10 backdrop-blur-lg rounded-xl p-6 mb-4">
-                            <h3 className="text-white font-semibold mb-4">Metronom</h3>
+                        <div className="bg-gray-800/90 backdrop-blur-lg rounded-xl p-6 mb-4 border border-gray-700">
+                            <button
+                                onClick={() => setShowAudioSettings(!showAudioSettings)}
+                                className="w-full flex items-center justify-between text-white font-semibold mb-2"
+                            >
+                                <span>Ljudinställningar</span>
+                                <span className="text-gray-400">{showAudioSettings ? '▼' : '▶'}</span>
+                            </button>
                             
-                            {isCountingIn && (
-                                <div className="mb-4 text-center">
-                                    <div className="text-yellow-400 text-2xl font-bold animate-pulse">
-                                        Inräkning: {currentBeat + 1} / {getBeatsPerMeasure()}
+                            {showAudioSettings && (
+                                <div className="space-y-3 mt-4 pt-4 border-t border-gray-700">
+                                    <div className="flex items-center gap-3">
+                                        <input
+                                            type="checkbox"
+                                            id="echoCancellation"
+                                            checked={echoCancellation}
+                                            onChange={(e) => setEchoCancellation(e.target.checked)}
+                                            disabled={tracks.some(t => t.recording)}
+                                            className="w-4 h-4"
+                                        />
+                                        <label htmlFor="echoCancellation" className="text-gray-300 text-sm cursor-pointer flex-1">
+                                            Ekocancellering (Echo Cancellation)
+                                            <div className="text-xs text-gray-500 mt-1">
+                                                Rekommenderas av för musikinspelning
+                                            </div>
+                                        </label>
+                                    </div>
+                                    
+                                    <div className="flex items-center gap-3">
+                                        <input
+                                            type="checkbox"
+                                            id="autoGainControl"
+                                            checked={autoGainControl}
+                                            onChange={(e) => setAutoGainControl(e.target.checked)}
+                                            disabled={tracks.some(t => t.recording)}
+                                            className="w-4 h-4"
+                                        />
+                                        <label htmlFor="autoGainControl" className="text-gray-300 text-sm cursor-pointer flex-1">
+                                            Automatisk volymjustering (Auto Gain Control)
+                                            <div className="text-xs text-gray-500 mt-1">
+                                                Justerar volymen automatiskt - kan ge ojämnt ljud
+                                            </div>
+                                        </label>
                                     </div>
                                 </div>
                             )}
-                            
-                            {metronomeActive && !isCountingIn && (
-                                <div className="mb-4 text-center">
-                                    <div className="text-green-400 text-lg font-semibold">
-                                        Taktslag: {(currentBeat % getBeatsPerMeasure()) + 1} / {getBeatsPerMeasure()}
-                                    </div>
-                                </div>
-                            )}
-                            
-                            <div className="flex items-center gap-4 mb-3">
-                                <button
-                                    onClick={toggleMetronome}
-                                    disabled={isCountingIn}
-                                    className={`${metronomeEnabled ? 'bg-green-500 hover:bg-green-600' : 'bg-gray-600 hover:bg-gray-700'} disabled:bg-gray-500 text-white py-2 px-6 rounded-lg font-semibold transition`}
-                                >
-                                    {metronomeEnabled ? '✓ Aktiverad' : 'Aktivera'}
-                                </button>
-                                <div className="text-blue-200 text-sm">
-                                    {metronomeEnabled ? 'Startar vid inspelning' : 'Klicka för att aktivera'}
-                                </div>
-                            </div>
-                            
-                            <div className="flex items-center gap-3 mb-3">
-                                <span className="text-blue-200 text-sm min-w-[60px]">Volym:</span>
-                                <input
-                                    type="range"
-                                    min="0"
-                                    max="1"
-                                    step="0.05"
-                                    value={metronomeVolume}
-                                    onChange={(e) => setMetronomeVolume(parseFloat(e.target.value))}
-                                    className="flex-1"
-                                />
-                                <span className="text-white text-sm min-w-[35px]">{Math.round(metronomeVolume * 100)}%</span>
-                            </div>
-                            
-                            <div className="flex items-center gap-4 mb-3">
-                                <div className="flex items-center gap-2 flex-1">
-                                    <span className="text-blue-200 text-sm min-w-[45px]">BPM:</span>
-                                    <input
-                                        type="range"
-                                        min="40"
-                                        max="240"
-                                        value={bpm}
-                                        onChange={(e) => changeBpm(parseInt(e.target.value))}
-                                        className="flex-1"
-                                    />
-                                    <input
-                                        type="number"
-                                        min="40"
-                                        max="240"
-                                        value={bpm}
-                                        onChange={(e) => changeBpm(e.target.value)}
-                                        className="bg-white/20 text-white px-2 py-1 rounded w-16 text-center border-2 border-blue-400 outline-none"
-                                    />
-                                </div>
-                            </div>
-                            
-                            <div className="flex items-center gap-4 mb-3">
-                                <span className="text-blue-200 text-sm min-w-[95px]">Tidssignatur:</span>
-                                <select
-                                    value={timeSignature}
-                                    onChange={(e) => setTimeSignature(e.target.value)}
-                                    disabled={metronomeActive || isCountingIn}
-                                    className="bg-white/20 text-white px-3 py-2 rounded border-2 border-blue-400 outline-none disabled:opacity-50"
-                                >
-                                    <option value="2/4">2/4</option>
-                                    <option value="3/4">3/4</option>
-                                    <option value="4/4">4/4</option>
-                                    <option value="5/4">5/4</option>
-                                    <option value="6/8">6/8</option>
-                                    <option value="7/8">7/8</option>
-                                    <option value="9/8">9/8</option>
-                                    <option value="12/8">12/8</option>
-                                </select>
-                            </div>
-                            
-                            <div className="flex items-center gap-3">
-                                <input
-                                    type="checkbox"
-                                    id="countIn"
-                                    checked={countIn}
-                                    onChange={(e) => setCountIn(e.target.checked)}
-                                    disabled={metronomeActive || isCountingIn}
-                                    className="w-4 h-4"
-                                />
-                                <label htmlFor="countIn" className="text-blue-200 text-sm cursor-pointer">
-                                    Inräkning vid inspelning (en takt)
-                                </label>
-                            </div>
                         </div>
 
-                        <div className="bg-white/10 backdrop-blur-lg rounded-xl p-6">
+                        <div className="bg-gray-800/90 backdrop-blur-lg rounded-xl p-6 mb-4 border border-gray-700">
+                            <button
+                                onClick={() => setShowMetronomeSettings(!showMetronomeSettings)}
+                                className="w-full flex items-center justify-between text-white font-semibold mb-2"
+                            >
+                                <span>Metronom</span>
+                                <span className="text-gray-400">{showMetronomeSettings ? '▼' : '▶'}</span>
+                            </button>
+                            
+                            {showMetronomeSettings && (
+                                <div className="mt-4 pt-4 border-t border-gray-700">
+                                    {metronomeActive && !isCountingIn && (
+                                        <div className="mb-4 text-center">
+                                            <div className="text-green-400 text-lg font-semibold">
+                                                Taktslag: {(currentBeat % getBeatsPerMeasure()) + 1} / {getBeatsPerMeasure()}
+                                            </div>
+                                        </div>
+                                    )}
+                                    
+                                    <div className="flex items-center gap-4 mb-3">
+                                        <button
+                                            onClick={toggleMetronome}
+                                            disabled={isCountingIn}
+                                            className={`${metronomeEnabled ? 'bg-green-600 hover:bg-green-700' : 'bg-gray-600 hover:bg-gray-700'} disabled:bg-gray-500 text-white py-2 px-6 rounded-lg font-semibold transition`}
+                                        >
+                                            {metronomeEnabled ? '✓ Aktiverad' : 'Aktivera'}
+                                        </button>
+                                        <div className="text-gray-400 text-sm">
+                                            {metronomeEnabled ? 'Startar vid inspelning' : 'Klicka för att aktivera'}
+                                        </div>
+                                    </div>
+                                    
+                                    <div className="flex items-center gap-3 mb-3">
+                                        <span className="text-gray-400 text-sm min-w-[60px]">Volym:</span>
+                                        <input
+                                            type="range"
+                                            min="0"
+                                            max="1"
+                                            step="0.05"
+                                            value={metronomeVolume}
+                                            onChange={(e) => setMetronomeVolume(parseFloat(e.target.value))}
+                                            className="flex-1"
+                                        />
+                                        <span className="text-white text-sm min-w-[35px]">{Math.round(metronomeVolume * 100)}%</span>
+                                    </div>
+                                    
+                                    <div className="flex items-center gap-4 mb-3">
+                                        <div className="flex items-center gap-2 flex-1">
+                                            <span className="text-gray-400 text-sm min-w-[45px]">BPM:</span>
+                                            <input
+                                                type="range"
+                                                min="40"
+                                                max="240"
+                                                value={bpm}
+                                                onChange={(e) => changeBpm(parseInt(e.target.value))}
+                                                className="flex-1"
+                                            />
+                                            <input
+                                                type="number"
+                                                min="40"
+                                                max="240"
+                                                value={bpm}
+                                                onChange={(e) => changeBpm(e.target.value)}
+                                                className="bg-gray-700 text-white px-2 py-1 rounded w-16 text-center border-2 border-gray-600 outline-none"
+                                            />
+                                        </div>
+                                    </div>
+                                    
+                                    <div className="flex items-center gap-4 mb-3">
+                                        <span className="text-gray-400 text-sm min-w-[95px]">Tidssignatur:</span>
+                                        <select
+                                            value={timeSignature}
+                                            onChange={(e) => setTimeSignature(e.target.value)}
+                                            disabled={metronomeActive || isCountingIn}
+                                            className="bg-gray-700 text-white px-3 py-2 rounded border-2 border-gray-600 outline-none disabled:opacity-50"
+                                        >
+                                            <option value="2/4">2/4</option>
+                                            <option value="3/4">3/4</option>
+                                            <option value="4/4">4/4</option>
+                                            <option value="5/4">5/4</option>
+                                            <option value="6/8">6/8</option>
+                                            <option value="7/8">7/8</option>
+                                            <option value="9/8">9/8</option>
+                                            <option value="12/8">12/8</option>
+                                        </select>
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+
+                        <div className="bg-gray-800/90 backdrop-blur-lg rounded-xl p-6 border border-gray-700">
                             <div className="mb-4">
                                 <div className="flex items-center justify-between text-white text-sm mb-2">
                                     <span>{formatTime(currentTime)}</span>
@@ -981,7 +1005,7 @@
                                     <button
                                         onClick={playAllTracks}
                                         disabled={!tracks.some(t => t.hasAudio)}
-                                        className="flex-1 bg-green-500 hover:bg-green-600 disabled:bg-gray-600 disabled:cursor-not-allowed text-white py-3 px-6 rounded-lg font-semibold flex items-center justify-center gap-2 transition"
+                                        className="flex-1 bg-green-600 hover:bg-green-700 disabled:bg-gray-600 disabled:cursor-not-allowed text-white py-3 px-6 rounded-lg font-semibold flex items-center justify-center gap-2 transition"
                                     >
                                         <Play />
                                         {isPaused ? 'Fortsätt' : 'Spela'}
@@ -989,7 +1013,7 @@
                                 ) : (
                                     <button
                                         onClick={pausePlayback}
-                                        className="flex-1 bg-orange-500 hover:bg-orange-600 text-white py-3 px-6 rounded-lg font-semibold flex items-center justify-center gap-2 transition"
+                                        className="flex-1 bg-orange-600 hover:bg-orange-700 text-white py-3 px-6 rounded-lg font-semibold flex items-center justify-center gap-2 transition"
                                     >
                                         <Pause />
                                         Pausa
@@ -999,7 +1023,7 @@
                                 <button
                                     onClick={stopPlayback}
                                     disabled={!isPlaying && !isPaused}
-                                    className="bg-red-500 hover:bg-red-600 disabled:bg-gray-600 disabled:cursor-not-allowed text-white py-3 px-6 rounded-lg font-semibold flex items-center justify-center gap-2 transition"
+                                    className="bg-red-600 hover:bg-red-700 disabled:bg-gray-600 disabled:cursor-not-allowed text-white py-3 px-6 rounded-lg font-semibold flex items-center justify-center gap-2 transition"
                                 >
                                     <StopCircle />
                                     Stoppa
@@ -1015,11 +1039,22 @@
                                 </button>
                             </div>
 
-                            <div className="flex gap-4">
+                            <div className="space-y-3">
+                                <div className="flex items-center gap-3">
+                                    <span className="text-gray-400 text-sm min-w-[75px]">Filnamn:</span>
+                                    <input
+                                        type="text"
+                                        value={exportFileName}
+                                        onChange={(e) => setExportFileName(e.target.value)}
+                                        placeholder={`inspelning-${new Date().toISOString().slice(0, 10)}`}
+                                        className="flex-1 bg-gray-700 text-white px-3 py-2 rounded border-2 border-gray-600 outline-none focus:border-gray-500"
+                                    />
+                                </div>
+                                
                                 <button
                                     onClick={exportToWAV}
                                     disabled={!tracks.some(t => t.hasAudio)}
-                                    className="flex-1 bg-blue-500 hover:bg-blue-600 disabled:bg-gray-600 disabled:cursor-not-allowed text-white py-3 px-6 rounded-lg font-semibold flex items-center justify-center gap-2 transition"
+                                    className="w-full bg-blue-600 hover:bg-blue-700 disabled:bg-gray-600 disabled:cursor-not-allowed text-white py-3 px-6 rounded-lg font-semibold flex items-center justify-center gap-2 transition"
                                 >
                                     <Download />
                                     Exportera WAV
@@ -1027,9 +1062,9 @@
                             </div>
                         </div>
 
-                        <div className="mt-6 bg-white/5 backdrop-blur-lg rounded-xl p-4">
-                            <p className="text-blue-200 text-sm">
-                                💡 <strong>Tips:</strong> Spela in ett spår i taget. Tryck på mikrofon-knappen för att börja och kvadraten för att stoppa. Justera volymen för varje spår innan du spelar eller exporterar.
+                        <div className="mt-6 bg-gray-800/50 backdrop-blur-lg rounded-xl p-4 border border-gray-700">
+                            <p className="text-gray-400 text-sm text-center">
+                                Utvecklad av <strong className="text-white">Indielogic AB</strong>
                             </p>
                         </div>
                     </div>
