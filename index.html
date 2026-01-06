@@ -109,6 +109,7 @@
             const [isPaused, setIsPaused] = useState(false);
             const [hasPermission, setHasPermission] = useState(false);
             const [metronomeActive, setMetronomeActive] = useState(false);
+            const [metronomeEnabled, setMetronomeEnabled] = useState(false);
             const [bpm, setBpm] = useState(120);
             const [timeSignature, setTimeSignature] = useState('4/4');
             const [countIn, setCountIn] = useState(true);
@@ -226,9 +227,10 @@
                     if (!granted) return;
                 }
 
-                // Starta inräkning om metronom är på
-                if (countIn && metronomeActive) {
+                // Starta inräkning om metronom är aktiverad
+                if (countIn && metronomeEnabled) {
                     setIsCountingIn(true);
+                    setMetronomeActive(true);
                     countInBeatRef.current = 0;
                     const beatsPerMeasure = getBeatsPerMeasure();
                     
@@ -249,6 +251,10 @@
                     };
                     
                     doCountIn();
+                } else if (metronomeEnabled) {
+                    // Starta metronom direkt utan inräkning
+                    setMetronomeActive(true);
+                    actuallyStartRecording(trackId);
                 } else {
                     actuallyStartRecording(trackId);
                 }
@@ -288,8 +294,8 @@
                     };
                     updateLevel();
 
-                    // Starta metronom synkad med inspelning om den är på
-                    if (metronomeActive) {
+                    // Starta metronom synkad med inspelning om den är aktiverad
+                    if (metronomeEnabled) {
                         recordingStartTimeRef.current = Date.now();
                         scheduleMetronome(0);
                     }
@@ -332,6 +338,7 @@
                             if (metronomeTimeoutRef.current) {
                                 clearTimeout(metronomeTimeoutRef.current);
                             }
+                            setMetronomeActive(false);
                             setCurrentBeat(0);
 
                             // Stoppa uppspelning av andra spår
@@ -544,21 +551,7 @@
             };
 
             const toggleMetronome = () => {
-                if (metronomeActive) {
-                    if (metronomeIntervalRef.current) {
-                        clearInterval(metronomeIntervalRef.current);
-                        metronomeIntervalRef.current = null;
-                    }
-                    if (metronomeTimeoutRef.current) {
-                        clearTimeout(metronomeTimeoutRef.current);
-                        metronomeTimeoutRef.current = null;
-                    }
-                    setMetronomeActive(false);
-                    setCurrentBeat(0);
-                } else {
-                    setMetronomeActive(true);
-                    scheduleMetronome(0);
-                }
+                setMetronomeEnabled(!metronomeEnabled);
             };
 
             const changeBpm = (newBpm) => {
@@ -809,10 +802,16 @@
                                 <button
                                     onClick={toggleMetronome}
                                     disabled={isCountingIn}
-                                    className={`${metronomeActive ? 'bg-red-500 hover:bg-red-600' : 'bg-gray-600 hover:bg-gray-700'} disabled:bg-gray-500 text-white py-2 px-6 rounded-lg font-semibold transition`}
+                                    className={`${metronomeEnabled ? 'bg-green-500 hover:bg-green-600' : 'bg-gray-600 hover:bg-gray-700'} disabled:bg-gray-500 text-white py-2 px-6 rounded-lg font-semibold transition`}
                                 >
-                                    {metronomeActive ? '⏸ Stoppa' : '▶ Starta'}
+                                    {metronomeEnabled ? '✓ Aktiverad' : 'Aktivera'}
                                 </button>
+                                <div className="text-blue-200 text-sm">
+                                    {metronomeEnabled ? 'Startar vid inspelning' : 'Klicka för att aktivera'}
+                                </div>
+                            </div>
+                            
+                            <div className="flex items-center gap-4 mb-3">
                                 <div className="flex items-center gap-2 flex-1">
                                     <span className="text-blue-200 text-sm min-w-[45px]">BPM:</span>
                                     <input
