@@ -259,13 +259,7 @@
                     if (!granted) return;
                 }
 
-                // Starta metronom direkt om den är aktiverad
-                if (metronomeEnabled) {
-                    setMetronomeActive(true);
-                    actuallyStartRecording(trackId);
-                } else {
-                    actuallyStartRecording(trackId);
-                }
+                actuallyStartRecording(trackId);
             };
 
             const actuallyStartRecording = async (trackId) => {
@@ -316,22 +310,24 @@
                     };
                     updateLevel();
 
+                    // Sätt starttid INNAN vi startar metronom och uppspelning
+                    if (audioContext.state === 'suspended') {
+                        await audioContext.resume();
+                    }
+                    
+                    // Synka allt till samma tidpunkt
+                    const startTime = audioContext.currentTime;
+                    recordingStartTimeRef.current = startTime;
+
                     // Starta metronom synkad med inspelning om den är aktiverad
                     if (metronomeEnabled) {
-                        recordingStartTimeRef.current = audioContext.currentTime;
+                        setMetronomeActive(true);
                         scheduleMetronome(0);
                     }
 
-                    // Spela upp andra spår samtidigt, synkat med metronomens start
+                    // Spela upp andra spår samtidigt, synkat med samma starttid
                     const otherTracks = tracks.filter(t => t.id !== trackId && t.hasAudio && !t.muted);
                     if (otherTracks.length > 0) {
-                        if (audioContext.state === 'suspended') {
-                            await audioContext.resume();
-                        }
-
-                        // Synka uppspelningen med metronomen
-                        const startTime = metronomeEnabled ? recordingStartTimeRef.current : audioContext.currentTime;
-
                         otherTracks.forEach(track => {
                             const buffer = audioBuffersRef.current[track.id];
                             if (!buffer) return;
