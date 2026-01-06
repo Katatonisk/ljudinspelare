@@ -336,8 +336,9 @@
                             const gainNode = audioContext.createGain();
                             
                             source.buffer = buffer;
-                            // Förstärk volymen under inspelning (2x original volym)
-                            gainNode.gain.value = track.volume * 2.0;
+                            // Förstärk volymen under inspelning - mindre om ekocancellering är på
+                            const playbackGain = echoCancellation ? 1.0 : 2.0;
+                            gainNode.gain.value = track.volume * playbackGain;
                             
                             source.connect(gainNode);
                             gainNode.connect(audioContext.destination);
