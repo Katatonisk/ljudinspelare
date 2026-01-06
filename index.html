@@ -244,6 +244,7 @@
                 const gainNode = ctx.createGain();
                 
                 oscillator.connect(gainNode);
+                // Koppla endast till destination (högtalare), INTE till inspelningen
                 gainNode.connect(ctx.destination);
                 
                 oscillator.frequency.value = isFirstBeat ? 1200 : 800;
@@ -364,7 +365,8 @@
                             const gainNode = audioContext.createGain();
                             
                             source.buffer = buffer;
-                            gainNode.gain.value = track.volume;
+                            // Förstärk volymen under inspelning (2x original volym)
+                            gainNode.gain.value = track.volume * 2.0;
                             
                             source.connect(gainNode);
                             gainNode.connect(audioContext.destination);
