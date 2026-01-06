@@ -53,6 +53,22 @@
             </svg>
         );
 
+        const Volume2 = () => (
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/>
+                <path d="M15.54 8.46a5 5 0 0 1 0 7.07"/>
+                <path d="M19.07 4.93a10 10 0 0 1 0 14.14"/>
+            </svg>
+        );
+
+        const VolumeX = () => (
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/>
+                <line x1="22" x2="16" y1="9" y2="15"/>
+                <line x1="16" x2="22" y1="9" y2="15"/>
+            </svg>
+        );
+
         const Download = () => (
             <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                 <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
@@ -84,10 +100,10 @@
 
         function MultiTrackRecorder() {
             const [tracks, setTracks] = useState([
-                { id: 1, name: 'Spår 1', recording: false, hasAudio: false, volume: 0.8, editing: false },
-                { id: 2, name: 'Spår 2', recording: false, hasAudio: false, volume: 0.8, editing: false },
-                { id: 3, name: 'Spår 3', recording: false, hasAudio: false, volume: 0.8, editing: false },
-                { id: 4, name: 'Spår 4', recording: false, hasAudio: false, volume: 0.8, editing: false }
+                { id: 1, name: 'Spår 1', recording: false, hasAudio: false, volume: 0.8, editing: false, muted: false },
+                { id: 2, name: 'Spår 2', recording: false, hasAudio: false, volume: 0.8, editing: false, muted: false },
+                { id: 3, name: 'Spår 3', recording: false, hasAudio: false, volume: 0.8, editing: false, muted: false },
+                { id: 4, name: 'Spår 4', recording: false, hasAudio: false, volume: 0.8, editing: false, muted: false }
             ]);
             const [isPlaying, setIsPlaying] = useState(false);
             const [isPaused, setIsPaused] = useState(false);
@@ -110,6 +126,7 @@
             const animationFrameRef = useRef(null);
             const analyserRef = useRef(null);
             const animationIdRef = useRef(null);
+            const recordingPlaybackNodesRef = useRef({});
 
             useEffect(() => {
                 audioContextRef.current = new (window.AudioContext || window.webkitAudioContext)();
@@ -192,6 +209,32 @@
                     };
                     updateLevel();
 
+                    // Spela upp andra spår samtidigt
+                    const otherTracks = tracks.filter(t => t.id !== trackId && t.hasAudio && !t.muted);
+                    if (otherTracks.length > 0) {
+                        if (audioContext.state === 'suspended') {
+                            await audioContext.resume();
+                        }
+
+                        otherTracks.forEach(track => {
+                            const buffer = audioBuffersRef.current[track.id];
+                            if (!buffer) return;
+
+                            const source = audioContext.createBufferSource();
+                            const gainNode = audioContext.createGain();
+                            
+                            source.buffer = buffer;
+                            gainNode.gain.value = track.volume;
+                            
+                            source.connect(gainNode);
+                            gainNode.connect(audioContext.destination);
+                            
+                            recordingPlaybackNodesRef.current[track.id] = { source, gainNode };
+                            
+                            source.start(0);
+                        });
+                    }
+
                     mediaRecorder.ondataavailable = (event) => {
                         if (event.data.size > 0) {
                             audioChunksRef.current.push(event.data);
@@ -200,6 +243,14 @@
 
                     mediaRecorder.onstop = async () => {
                         try {
+                            // Stoppa uppspelning av andra spår
+                            Object.values(recordingPlaybackNodesRef.current).forEach(({ source }) => {
+                                try {
+                                    source.stop();
+                                } catch (e) {}
+                            });
+                            recordingPlaybackNodesRef.current = {};
+
                             // Stoppa volymindikering
                             if (animationIdRef.current) {
                                 cancelAnimationFrame(animationIdRef.current);
@@ -261,7 +312,7 @@
                         await audioContextRef.current.resume();
                     }
 
-                    const tracksWithAudio = tracks.filter(t => t.hasAudio);
+                    const tracksWithAudio = tracks.filter(t => t.hasAudio && !t.muted);
                     if (tracksWithAudio.length === 0) {
                         console.log('Inga spår att spela');
                         return;
@@ -383,6 +434,21 @@
                 ));
                 if (gainNodesRef.current[trackId]) {
                     gainNodesRef.current[trackId].gain.value = volume;
+                }
+                if (recordingPlaybackNodesRef.current[trackId]) {
+                    recordingPlaybackNodesRef.current[trackId].gainNode.gain.value = volume;
+                }
+            };
+
+            const toggleMute = (trackId) => {
+                setTracks(prev => prev.map(t => 
+                    t.id === trackId ? { ...t, muted: !t.muted } : t
+                ));
+                
+                // Om spåret spelas just nu, stoppa det
+                if (gainNodesRef.current[trackId]) {
+                    const track = tracks.find(t => t.id === trackId);
+                    gainNodesRef.current[trackId].gain.value = track.muted ? track.volume : 0;
                 }
             };
 
@@ -572,6 +638,15 @@
                                             />
                                         )}
                                         <div className="flex gap-2">
+                                            {track.hasAudio && (
+                                                <button
+                                                    onClick={() => toggleMute(track.id)}
+                                                    className={`${track.muted ? 'bg-red-600 hover:bg-red-700' : 'bg-gray-600 hover:bg-gray-700'} text-white p-2 rounded-lg transition`}
+                                                    title={track.muted ? 'Avtysta' : 'Tysta'}
+                                                >
+                                                    {track.muted ? <VolumeX /> : <Volume2 />}
+                                                </button>
+                                            )}
                                             {!track.recording && !track.hasAudio && (
                                                 <button
                                                     onClick={() => startRecording(track.id)}
@@ -609,9 +684,12 @@
                                                 step="0.01"
                                                 value={track.volume}
                                                 onChange={(e) => changeVolume(track.id, e.target.value)}
+                                                disabled={track.muted}
                                                 className="flex-1"
                                             />
-                                            <span className="text-white text-sm min-w-[35px]">{Math.round(track.volume * 100)}%</span>
+                                            <span className="text-white text-sm min-w-[35px]">
+                                                {track.muted ? '🔇' : Math.round(track.volume * 100) + '%'}
+                                            </span>
                                         </div>
                                     )}
                                     
