@@ -287,7 +287,7 @@
                     // Lägg till en gainNode för att förstärka inspelningssignalen
                     const inputGainNode = audioContext.createGain();
                     // Mindre förstärkning om ekocancellering är på
-                    inputGainNode.gain.value = echoCancellation ? 1.5 : 2.0;
+                    inputGainNode.gain.value = echoCancellation ? 1.0 : 2.0;
                     
                     const analyser = audioContext.createAnalyser();
                     analyser.fftSize = 256;
@@ -669,6 +669,21 @@
                         }
                     }
                 });
+
+                // Normalisera mixningen för att undvika clipping
+                let maxSample = 0;
+                for (let i = 0; i < maxLength; i++) {
+                    maxSample = Math.max(maxSample, Math.abs(leftChannel[i]), Math.abs(rightChannel[i]));
+                }
+                
+                // Om ljudet är för högt, normalisera det
+                if (maxSample > 0.95) {
+                    const normalizationFactor = 0.95 / maxSample;
+                    for (let i = 0; i < maxLength; i++) {
+                        leftChannel[i] *= normalizationFactor;
+                        rightChannel[i] *= normalizationFactor;
+                    }
+                }
 
                 const wavBlob = bufferToWave(mixedBuffer, maxLength);
                 const url = URL.createObjectURL(wavBlob);
