@@ -1,0 +1,671 @@
+<!DOCTYPE html>
+<html lang="sv">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>4-kanals Ljudinspelare</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.5/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useRef, useEffect } = React;
+
+        // Lucide icons som SVG
+        const Mic = () => (
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/>
+                <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+                <line x1="12" x2="12" y1="19" y2="22"/>
+            </svg>
+        );
+
+        const Square = () => (
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+                <rect width="18" height="18" x="3" y="3" rx="2"/>
+            </svg>
+        );
+
+        const Play = () => (
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
+                <polygon points="5 3 19 12 5 21 5 3"/>
+            </svg>
+        );
+
+        const Pause = () => (
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
+                <rect width="4" height="16" x="6" y="4"/>
+                <rect width="4" height="16" x="14" y="4"/>
+            </svg>
+        );
+
+        const Trash2 = () => (
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M3 6h18"/>
+                <path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/>
+                <path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/>
+                <line x1="10" x2="10" y1="11" y2="17"/>
+                <line x1="14" x2="14" y1="11" y2="17"/>
+            </svg>
+        );
+
+        const Download = () => (
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                <polyline points="7 10 12 15 17 10"/>
+                <line x1="12" x2="12" y1="15" y2="3"/>
+            </svg>
+        );
+
+        const StopCircle = () => (
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <circle cx="12" cy="12" r="10"/>
+                <rect width="6" height="6" x="9" y="9"/>
+            </svg>
+        );
+
+        const SkipBack = () => (
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <polygon points="19 20 9 12 19 4 19 20"/>
+                <line x1="5" x2="5" y1="19" y2="5"/>
+            </svg>
+        );
+
+        const SkipForward = () => (
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <polygon points="5 4 15 12 5 20 5 4"/>
+                <line x1="19" x2="19" y1="5" y2="19"/>
+            </svg>
+        );
+
+        function MultiTrackRecorder() {
+            const [tracks, setTracks] = useState([
+                { id: 1, name: 'Spår 1', recording: false, hasAudio: false, volume: 0.8, editing: false },
+                { id: 2, name: 'Spår 2', recording: false, hasAudio: false, volume: 0.8, editing: false },
+                { id: 3, name: 'Spår 3', recording: false, hasAudio: false, volume: 0.8, editing: false },
+                { id: 4, name: 'Spår 4', recording: false, hasAudio: false, volume: 0.8, editing: false }
+            ]);
+            const [isPlaying, setIsPlaying] = useState(false);
+            const [isPaused, setIsPaused] = useState(false);
+            const [hasPermission, setHasPermission] = useState(false);
+            const [metronomeActive, setMetronomeActive] = useState(false);
+            const [bpm, setBpm] = useState(120);
+            const [currentTime, setCurrentTime] = useState(0);
+            const [duration, setDuration] = useState(0);
+            
+            const mediaRecorderRef = useRef(null);
+            const audioChunksRef = useRef([]);
+            const audioBuffersRef = useRef({});
+            const audioContextRef = useRef(null);
+            const sourceNodesRef = useRef({});
+            const gainNodesRef = useRef({});
+            const metronomeIntervalRef = useRef(null);
+            const playbackStartTimeRef = useRef(0);
+            const pauseTimeRef = useRef(0);
+            const animationFrameRef = useRef(null);
+
+            useEffect(() => {
+                audioContextRef.current = new (window.AudioContext || window.webkitAudioContext)();
+                return () => {
+                    if (audioContextRef.current) {
+                        audioContextRef.current.close();
+                    }
+                    if (metronomeIntervalRef.current) {
+                        clearInterval(metronomeIntervalRef.current);
+                    }
+                    if (animationFrameRef.current) {
+                        cancelAnimationFrame(animationFrameRef.current);
+                    }
+                };
+            }, []);
+
+            useEffect(() => {
+                const tracksWithAudio = tracks.filter(t => t.hasAudio);
+                if (tracksWithAudio.length > 0) {
+                    let maxDuration = 0;
+                    tracksWithAudio.forEach(track => {
+                        const buffer = audioBuffersRef.current[track.id];
+                        if (buffer && buffer.duration > maxDuration) {
+                            maxDuration = buffer.duration;
+                        }
+                    });
+                    setDuration(maxDuration);
+                } else {
+                    setDuration(0);
+                    setCurrentTime(0);
+                }
+            }, [tracks]);
+
+            const requestMicrophonePermission = async () => {
+                try {
+                    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                    stream.getTracks().forEach(track => track.stop());
+                    setHasPermission(true);
+                    return true;
+                } catch (err) {
+                    alert('Kunde inte få tillgång till mikrofonen. Kontrollera dina inställningar.');
+                    return false;
+                }
+            };
+
+            const startRecording = async (trackId) => {
+                if (!hasPermission) {
+                    const granted = await requestMicrophonePermission();
+                    if (!granted) return;
+                }
+
+                try {
+                    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                    const mediaRecorder = new MediaRecorder(stream);
+                    mediaRecorderRef.current = mediaRecorder;
+                    audioChunksRef.current = [];
+
+                    mediaRecorder.ondataavailable = (event) => {
+                        if (event.data.size > 0) {
+                            audioChunksRef.current.push(event.data);
+                        }
+                    };
+
+                    mediaRecorder.onstop = async () => {
+                        const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
+                        const arrayBuffer = await audioBlob.arrayBuffer();
+                        const audioBuffer = await audioContextRef.current.decodeAudioData(arrayBuffer);
+                        audioBuffersRef.current[trackId] = audioBuffer;
+
+                        setTracks(prev => prev.map(t => 
+                            t.id === trackId ? { ...t, recording: false, hasAudio: true } : t
+                        ));
+
+                        stream.getTracks().forEach(track => track.stop());
+                    };
+
+                    mediaRecorder.start();
+                    setTracks(prev => prev.map(t => 
+                        t.id === trackId ? { ...t, recording: true } : t
+                    ));
+                } catch (err) {
+                    alert('Fel vid inspelning: ' + err.message);
+                }
+            };
+
+            const stopRecording = () => {
+                if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
+                    mediaRecorderRef.current.stop();
+                }
+            };
+
+            const deleteTrack = (trackId) => {
+                delete audioBuffersRef.current[trackId];
+                setTracks(prev => prev.map(t => 
+                    t.id === trackId ? { ...t, hasAudio: false, recording: false } : t
+                ));
+            };
+
+            const playAllTracks = async () => {
+                if (audioContextRef.current.state === 'suspended') {
+                    await audioContextRef.current.resume();
+                }
+
+                const tracksWithAudio = tracks.filter(t => t.hasAudio);
+                if (tracksWithAudio.length === 0) return;
+
+                const startOffset = isPaused ? pauseTimeRef.current : currentTime;
+                
+                setIsPlaying(true);
+                setIsPaused(false);
+                playbackStartTimeRef.current = audioContextRef.current.currentTime - startOffset;
+
+                tracksWithAudio.forEach(track => {
+                    const source = audioContextRef.current.createBufferSource();
+                    const gainNode = audioContextRef.current.createGain();
+                    
+                    source.buffer = audioBuffersRef.current[track.id];
+                    gainNode.gain.value = track.volume;
+                    
+                    source.connect(gainNode);
+                    gainNode.connect(audioContextRef.current.destination);
+                    
+                    sourceNodesRef.current[track.id] = source;
+                    gainNodesRef.current[track.id] = gainNode;
+                    
+                    source.onended = () => {
+                        delete sourceNodesRef.current[track.id];
+                        if (Object.keys(sourceNodesRef.current).length === 0) {
+                            setIsPlaying(false);
+                            setCurrentTime(0);
+                            pauseTimeRef.current = 0;
+                        }
+                    };
+                    
+                    source.start(0, startOffset);
+                });
+
+                const updateTime = () => {
+                    if (audioContextRef.current && playbackStartTimeRef.current) {
+                        const elapsed = audioContextRef.current.currentTime - playbackStartTimeRef.current;
+                        setCurrentTime(Math.min(elapsed, duration));
+                        if (elapsed < duration) {
+                            animationFrameRef.current = requestAnimationFrame(updateTime);
+                        }
+                    }
+                };
+                updateTime();
+            };
+
+            const pausePlayback = () => {
+                Object.values(sourceNodesRef.current).forEach(source => {
+                    try {
+                        source.stop();
+                    } catch (e) {}
+                });
+                sourceNodesRef.current = {};
+                pauseTimeRef.current = currentTime;
+                setIsPlaying(false);
+                setIsPaused(true);
+                if (animationFrameRef.current) {
+                    cancelAnimationFrame(animationFrameRef.current);
+                }
+            };
+
+            const stopPlayback = () => {
+                Object.values(sourceNodesRef.current).forEach(source => {
+                    try {
+                        source.stop();
+                    } catch (e) {}
+                });
+                sourceNodesRef.current = {};
+                setIsPlaying(false);
+                setIsPaused(false);
+                setCurrentTime(0);
+                pauseTimeRef.current = 0;
+                if (animationFrameRef.current) {
+                    cancelAnimationFrame(animationFrameRef.current);
+                }
+            };
+
+            const seekTo = (time) => {
+                const wasPlaying = isPlaying;
+                if (wasPlaying) {
+                    pausePlayback();
+                }
+                setCurrentTime(time);
+                pauseTimeRef.current = time;
+                if (wasPlaying) {
+                    setTimeout(() => playAllTracks(), 50);
+                }
+            };
+
+            const formatTime = (seconds) => {
+                const mins = Math.floor(seconds / 60);
+                const secs = Math.floor(seconds % 60);
+                return `${mins}:${secs.toString().padStart(2, '0')}`;
+            };
+
+            const changeVolume = (trackId, value) => {
+                const volume = parseFloat(value);
+                setTracks(prev => prev.map(t => 
+                    t.id === trackId ? { ...t, volume } : t
+                ));
+                if (gainNodesRef.current[trackId]) {
+                    gainNodesRef.current[trackId].gain.value = volume;
+                }
+            };
+
+            const toggleMetronome = () => {
+                if (metronomeActive) {
+                    if (metronomeIntervalRef.current) {
+                        clearInterval(metronomeIntervalRef.current);
+                        metronomeIntervalRef.current = null;
+                    }
+                    setMetronomeActive(false);
+                } else {
+                    setMetronomeActive(true);
+                    const interval = (60 / bpm) * 1000;
+                    playMetronomeClick();
+                    metronomeIntervalRef.current = setInterval(() => {
+                        playMetronomeClick();
+                    }, interval);
+                }
+            };
+
+            const playMetronomeClick = () => {
+                const ctx = audioContextRef.current;
+                const oscillator = ctx.createOscillator();
+                const gainNode = ctx.createGain();
+                
+                oscillator.connect(gainNode);
+                gainNode.connect(ctx.destination);
+                
+                oscillator.frequency.value = 1000;
+                gainNode.gain.value = 0.3;
+                
+                oscillator.start(ctx.currentTime);
+                gainNode.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.05);
+                oscillator.stop(ctx.currentTime + 0.05);
+            };
+
+            const changeBpm = (newBpm) => {
+                setBpm(newBpm);
+                if (metronomeActive) {
+                    if (metronomeIntervalRef.current) {
+                        clearInterval(metronomeIntervalRef.current);
+                    }
+                    const interval = (60 / newBpm) * 1000;
+                    metronomeIntervalRef.current = setInterval(() => {
+                        playMetronomeClick();
+                    }, interval);
+                }
+            };
+
+            const startEditingName = (trackId) => {
+                setTracks(prev => prev.map(t => 
+                    t.id === trackId ? { ...t, editing: true } : t
+                ));
+            };
+
+            const updateTrackName = (trackId, newName) => {
+                setTracks(prev => prev.map(t => 
+                    t.id === trackId ? { ...t, name: newName || `Spår ${trackId}`, editing: false } : t
+                ));
+            };
+
+            const exportToWAV = () => {
+                const tracksWithAudio = tracks.filter(t => t.hasAudio);
+                if (tracksWithAudio.length === 0) {
+                    alert('Inga spår att exportera');
+                    return;
+                }
+
+                let maxLength = 0;
+                tracksWithAudio.forEach(track => {
+                    const buffer = audioBuffersRef.current[track.id];
+                    if (buffer.length > maxLength) {
+                        maxLength = buffer.length;
+                    }
+                });
+
+                const sampleRate = audioContextRef.current.sampleRate;
+                const mixedBuffer = audioContextRef.current.createBuffer(2, maxLength, sampleRate);
+                const leftChannel = mixedBuffer.getChannelData(0);
+                const rightChannel = mixedBuffer.getChannelData(1);
+
+                tracksWithAudio.forEach(track => {
+                    const buffer = audioBuffersRef.current[track.id];
+                    const volume = track.volume;
+                    
+                    for (let channel = 0; channel < Math.min(buffer.numberOfChannels, 2); channel++) {
+                        const channelData = buffer.getChannelData(channel);
+                        const targetChannel = channel === 0 ? leftChannel : rightChannel;
+                        
+                        for (let i = 0; i < channelData.length; i++) {
+                            targetChannel[i] += channelData[i] * volume;
+                        }
+                    }
+                    
+                    if (buffer.numberOfChannels === 1) {
+                        const channelData = buffer.getChannelData(0);
+                        for (let i = 0; i < channelData.length; i++) {
+                            rightChannel[i] += channelData[i] * volume;
+                        }
+                    }
+                });
+
+                const wavBlob = bufferToWave(mixedBuffer, maxLength);
+                const url = URL.createObjectURL(wavBlob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `inspelning-${Date.now()}.wav`;
+                a.click();
+                URL.revokeObjectURL(url);
+            };
+
+            const bufferToWave = (buffer, length) => {
+                const numberOfChannels = buffer.numberOfChannels;
+                const sampleRate = buffer.sampleRate;
+                const format = 1;
+                const bitDepth = 16;
+
+                const bytesPerSample = bitDepth / 8;
+                const blockAlign = numberOfChannels * bytesPerSample;
+
+                const data = new Uint8Array(44 + length * numberOfChannels * bytesPerSample);
+                const view = new DataView(data.buffer);
+
+                const writeString = (offset, string) => {
+                    for (let i = 0; i < string.length; i++) {
+                        view.setUint8(offset + i, string.charCodeAt(i));
+                    }
+                };
+
+                writeString(0, 'RIFF');
+                view.setUint32(4, 36 + length * numberOfChannels * bytesPerSample, true);
+                writeString(8, 'WAVE');
+                writeString(12, 'fmt ');
+                view.setUint32(16, 16, true);
+                view.setUint16(20, format, true);
+                view.setUint16(22, numberOfChannels, true);
+                view.setUint32(24, sampleRate, true);
+                view.setUint32(28, sampleRate * blockAlign, true);
+                view.setUint16(32, blockAlign, true);
+                view.setUint16(34, bitDepth, true);
+                writeString(36, 'data');
+                view.setUint32(40, length * numberOfChannels * bytesPerSample, true);
+
+                let offset = 44;
+                for (let i = 0; i < length; i++) {
+                    for (let channel = 0; channel < numberOfChannels; channel++) {
+                        const sample = Math.max(-1, Math.min(1, buffer.getChannelData(channel)[i]));
+                        view.setInt16(offset, sample < 0 ? sample * 0x8000 : sample * 0x7FFF, true);
+                        offset += 2;
+                    }
+                }
+
+                return new Blob([data], { type: 'audio/wav' });
+            };
+
+            return (
+                <div className="min-h-screen bg-gradient-to-br from-purple-900 via-blue-900 to-indigo-900 p-4">
+                    <div className="max-w-2xl mx-auto">
+                        <div className="bg-white/10 backdrop-blur-lg rounded-2xl shadow-2xl p-6 mb-6">
+                            <h1 className="text-3xl font-bold text-white mb-2">4-kanals Ljudinspelare</h1>
+                            <p className="text-blue-200 text-sm">Spela in musik-idéer direkt i din mobil</p>
+                        </div>
+
+                        <div className="space-y-4 mb-6">
+                            {tracks.map(track => (
+                                <div key={track.id} className="bg-white/10 backdrop-blur-lg rounded-xl p-4">
+                                    <div className="flex items-center justify-between mb-3">
+                                        {!track.editing ? (
+                                            <h3 
+                                                className="text-white font-semibold cursor-pointer hover:text-blue-300 transition"
+                                                onClick={() => startEditingName(track.id)}
+                                            >
+                                                {track.name}
+                                            </h3>
+                                        ) : (
+                                            <input
+                                                type="text"
+                                                defaultValue={track.name}
+                                                autoFocus
+                                                onBlur={(e) => updateTrackName(track.id, e.target.value)}
+                                                onKeyDown={(e) => {
+                                                    if (e.key === 'Enter') {
+                                                        updateTrackName(track.id, e.target.value);
+                                                    }
+                                                }}
+                                                className="bg-white/20 text-white px-2 py-1 rounded border-2 border-blue-400 outline-none"
+                                            />
+                                        )}
+                                        <div className="flex gap-2">
+                                            {!track.recording && !track.hasAudio && (
+                                                <button
+                                                    onClick={() => startRecording(track.id)}
+                                                    className="bg-red-500 hover:bg-red-600 text-white p-2 rounded-lg transition"
+                                                >
+                                                    <Mic />
+                                                </button>
+                                            )}
+                                            {track.recording && (
+                                                <button
+                                                    onClick={stopRecording}
+                                                    className="bg-gray-700 hover:bg-gray-800 text-white p-2 rounded-lg transition animate-pulse"
+                                                >
+                                                    <Square />
+                                                </button>
+                                            )}
+                                            {track.hasAudio && (
+                                                <button
+                                                    onClick={() => deleteTrack(track.id)}
+                                                    className="bg-gray-700 hover:bg-gray-800 text-white p-2 rounded-lg transition"
+                                                >
+                                                    <Trash2 />
+                                                </button>
+                                            )}
+                                        </div>
+                                    </div>
+                                    
+                                    {track.hasAudio && (
+                                        <div className="flex items-center gap-3">
+                                            <span className="text-blue-200 text-sm min-w-[60px]">Volym:</span>
+                                            <input
+                                                type="range"
+                                                min="0"
+                                                max="1"
+                                                step="0.01"
+                                                value={track.volume}
+                                                onChange={(e) => changeVolume(track.id, e.target.value)}
+                                                className="flex-1"
+                                            />
+                                            <span className="text-white text-sm min-w-[35px]">{Math.round(track.volume * 100)}%</span>
+                                        </div>
+                                    )}
+                                    
+                                    {track.recording && (
+                                        <div className="mt-2 text-red-400 text-sm font-semibold">
+                                            ● Spelar in...
+                                        </div>
+                                    )}
+                                </div>
+                            ))}
+                        </div>
+
+                        <div className="bg-white/10 backdrop-blur-lg rounded-xl p-6 mb-4">
+                            <h3 className="text-white font-semibold mb-4">Metronom</h3>
+                            <div className="flex items-center gap-4 mb-3">
+                                <button
+                                    onClick={toggleMetronome}
+                                    className={`${metronomeActive ? 'bg-red-500 hover:bg-red-600' : 'bg-gray-600 hover:bg-gray-700'} text-white py-2 px-6 rounded-lg font-semibold transition`}
+                                >
+                                    {metronomeActive ? '⏸ Stoppa' : '▶ Starta'}
+                                </button>
+                                <div className="flex items-center gap-2 flex-1">
+                                    <span className="text-blue-200 text-sm min-w-[45px]">BPM:</span>
+                                    <input
+                                        type="range"
+                                        min="40"
+                                        max="240"
+                                        value={bpm}
+                                        onChange={(e) => changeBpm(parseInt(e.target.value))}
+                                        className="flex-1"
+                                    />
+                                    <span className="text-white font-semibold min-w-[40px]">{bpm}</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div className="bg-white/10 backdrop-blur-lg rounded-xl p-6">
+                            <div className="mb-4">
+                                <div className="flex items-center justify-between text-white text-sm mb-2">
+                                    <span>{formatTime(currentTime)}</span>
+                                    <span>{formatTime(duration)}</span>
+                                </div>
+                                <input
+                                    type="range"
+                                    min="0"
+                                    max={duration || 100}
+                                    step="0.1"
+                                    value={currentTime}
+                                    onChange={(e) => seekTo(parseFloat(e.target.value))}
+                                    disabled={duration === 0}
+                                    className="w-full"
+                                />
+                            </div>
+
+                            <div className="flex gap-2 mb-4">
+                                <button
+                                    onClick={() => seekTo(Math.max(0, currentTime - 5))}
+                                    disabled={duration === 0}
+                                    className="bg-gray-600 hover:bg-gray-700 disabled:bg-gray-800 disabled:cursor-not-allowed text-white py-2 px-3 rounded-lg transition"
+                                    title="Hoppa bakåt 5 sek"
+                                >
+                                    <SkipBack />
+                                </button>
+                                
+                                {!isPlaying ? (
+                                    <button
+                                        onClick={playAllTracks}
+                                        disabled={!tracks.some(t => t.hasAudio)}
+                                        className="flex-1 bg-green-500 hover:bg-green-600 disabled:bg-gray-600 disabled:cursor-not-allowed text-white py-3 px-6 rounded-lg font-semibold flex items-center justify-center gap-2 transition"
+                                    >
+                                        <Play />
+                                        {isPaused ? 'Fortsätt' : 'Spela'}
+                                    </button>
+                                ) : (
+                                    <button
+                                        onClick={pausePlayback}
+                                        className="flex-1 bg-orange-500 hover:bg-orange-600 text-white py-3 px-6 rounded-lg font-semibold flex items-center justify-center gap-2 transition"
+                                    >
+                                        <Pause />
+                                        Pausa
+                                    </button>
+                                )}
+
+                                <button
+                                    onClick={stopPlayback}
+                                    disabled={!isPlaying && !isPaused}
+                                    className="bg-red-500 hover:bg-red-600 disabled:bg-gray-600 disabled:cursor-not-allowed text-white py-3 px-6 rounded-lg font-semibold flex items-center justify-center gap-2 transition"
+                                >
+                                    <StopCircle />
+                                    Stoppa
+                                </button>
+
+                                <button
+                                    onClick={() => seekTo(Math.min(duration, currentTime + 5))}
+                                    disabled={duration === 0}
+                                    className="bg-gray-600 hover:bg-gray-700 disabled:bg-gray-800 disabled:cursor-not-allowed text-white py-2 px-3 rounded-lg transition"
+                                    title="Hoppa framåt 5 sek"
+                                >
+                                    <SkipForward />
+                                </button>
+                            </div>
+
+                            <div className="flex gap-4">
+                                <button
+                                    onClick={exportToWAV}
+                                    disabled={!tracks.some(t => t.hasAudio)}
+                                    className="flex-1 bg-blue-500 hover:bg-blue-600 disabled:bg-gray-600 disabled:cursor-not-allowed text-white py-3 px-6 rounded-lg font-semibold flex items-center justify-center gap-2 transition"
+                                >
+                                    <Download />
+                                    Exportera WAV
+                                </button>
+                            </div>
+                        </div>
+
+                        <div className="mt-6 bg-white/5 backdrop-blur-lg rounded-xl p-4">
+                            <p className="text-blue-200 text-sm">
+                                💡 <strong>Tips:</strong> Spela in ett spår i taget. Tryck på mikrofon-knappen för att börja och kvadraten för att stoppa. Justera volymen för varje spår innan du spelar eller exporterar.
+                            </p>
+                        </div>
+                    </div>
+                </div>
+            );
+        }
+
+        ReactDOM.render(<MultiTrackRecorder />, document.getElementById('root'));
+    </script>
+</body>
+</html>
