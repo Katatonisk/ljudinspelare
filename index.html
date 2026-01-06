@@ -110,6 +110,10 @@
             const [hasPermission, setHasPermission] = useState(false);
             const [metronomeActive, setMetronomeActive] = useState(false);
             const [bpm, setBpm] = useState(120);
+            const [timeSignature, setTimeSignature] = useState('4/4');
+            const [countIn, setCountIn] = useState(true);
+            const [isCountingIn, setIsCountingIn] = useState(false);
+            const [currentBeat, setCurrentBeat] = useState(0);
             const [currentTime, setCurrentTime] = useState(0);
             const [duration, setDuration] = useState(0);
             const [recordingLevels, setRecordingLevels] = useState({});
@@ -127,6 +131,9 @@
             const analyserRef = useRef(null);
             const animationIdRef = useRef(null);
             const recordingPlaybackNodesRef = useRef({});
+            const metronomeTimeoutRef = useRef(null);
+            const countInBeatRef = useRef(0);
+            const recordingStartTimeRef = useRef(0);
 
             useEffect(() => {
                 audioContextRef.current = new (window.AudioContext || window.webkitAudioContext)();
@@ -142,6 +149,9 @@
                     }
                     if (animationIdRef.current) {
                         cancelAnimationFrame(animationIdRef.current);
+                    }
+                    if (metronomeTimeoutRef.current) {
+                        clearTimeout(metronomeTimeoutRef.current);
                     }
                 };
             }, []);
@@ -175,7 +185,76 @@
                 }
             };
 
+            const getBeatsPerMeasure = () => {
+                const [beats] = timeSignature.split('/').map(Number);
+                return beats;
+            };
+
+            const playMetronomeClick = (isFirstBeat = false) => {
+                const ctx = audioContextRef.current;
+                const oscillator = ctx.createOscillator();
+                const gainNode = ctx.createGain();
+                
+                oscillator.connect(gainNode);
+                gainNode.connect(ctx.destination);
+                
+                // Högre frekvens och volym för första slaget
+                oscillator.frequency.value = isFirstBeat ? 1200 : 800;
+                gainNode.gain.value = isFirstBeat ? 0.5 : 0.3;
+                
+                oscillator.start(ctx.currentTime);
+                gainNode.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.05);
+                oscillator.stop(ctx.currentTime + 0.05);
+            };
+
+            const scheduleMetronome = (beatNumber = 0) => {
+                const beatsPerMeasure = getBeatsPerMeasure();
+                const isFirstBeat = beatNumber % beatsPerMeasure === 0;
+                
+                setCurrentBeat(beatNumber);
+                playMetronomeClick(isFirstBeat);
+                
+                const interval = (60 / bpm) * 1000;
+                metronomeTimeoutRef.current = setTimeout(() => {
+                    scheduleMetronome(beatNumber + 1);
+                }, interval);
+            };
+
             const startRecording = async (trackId) => {
+                if (!hasPermission) {
+                    const granted = await requestMicrophonePermission();
+                    if (!granted) return;
+                }
+
+                // Starta inräkning om metronom är på
+                if (countIn && metronomeActive) {
+                    setIsCountingIn(true);
+                    countInBeatRef.current = 0;
+                    const beatsPerMeasure = getBeatsPerMeasure();
+                    
+                    const doCountIn = () => {
+                        const isFirstBeat = countInBeatRef.current % beatsPerMeasure === 0;
+                        playMetronomeClick(isFirstBeat);
+                        setCurrentBeat(countInBeatRef.current);
+                        countInBeatRef.current++;
+                        
+                        if (countInBeatRef.current < beatsPerMeasure) {
+                            const interval = (60 / bpm) * 1000;
+                            metronomeTimeoutRef.current = setTimeout(doCountIn, interval);
+                        } else {
+                            // Inräkning klar, starta inspelning
+                            setIsCountingIn(false);
+                            actuallyStartRecording(trackId);
+                        }
+                    };
+                    
+                    doCountIn();
+                } else {
+                    actuallyStartRecording(trackId);
+                }
+            };
+
+            const actuallyStartRecording = async (trackId) => {
                 if (!hasPermission) {
                     const granted = await requestMicrophonePermission();
                     if (!granted) return;
@@ -208,6 +287,12 @@
                         }
                     };
                     updateLevel();
+
+                    // Starta metronom synkad med inspelning om den är på
+                    if (metronomeActive) {
+                        recordingStartTimeRef.current = Date.now();
+                        scheduleMetronome(0);
+                    }
 
                     // Spela upp andra spår samtidigt
                     const otherTracks = tracks.filter(t => t.id !== trackId && t.hasAudio && !t.muted);
@@ -243,6 +328,12 @@
 
                     mediaRecorder.onstop = async () => {
                         try {
+                            // Stoppa metronom
+                            if (metronomeTimeoutRef.current) {
+                                clearTimeout(metronomeTimeoutRef.current);
+                            }
+                            setCurrentBeat(0);
+
                             // Stoppa uppspelning av andra spår
                             Object.values(recordingPlaybackNodesRef.current).forEach(({ source }) => {
                                 try {
@@ -458,43 +549,28 @@
                         clearInterval(metronomeIntervalRef.current);
                         metronomeIntervalRef.current = null;
                     }
+                    if (metronomeTimeoutRef.current) {
+                        clearTimeout(metronomeTimeoutRef.current);
+                        metronomeTimeoutRef.current = null;
+                    }
                     setMetronomeActive(false);
+                    setCurrentBeat(0);
                 } else {
                     setMetronomeActive(true);
-                    const interval = (60 / bpm) * 1000;
-                    playMetronomeClick();
-                    metronomeIntervalRef.current = setInterval(() => {
-                        playMetronomeClick();
-                    }, interval);
+                    scheduleMetronome(0);
                 }
             };
 
-            const playMetronomeClick = () => {
-                const ctx = audioContextRef.current;
-                const oscillator = ctx.createOscillator();
-                const gainNode = ctx.createGain();
-                
-                oscillator.connect(gainNode);
-                gainNode.connect(ctx.destination);
-                
-                oscillator.frequency.value = 1000;
-                gainNode.gain.value = 0.3;
-                
-                oscillator.start(ctx.currentTime);
-                gainNode.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.05);
-                oscillator.stop(ctx.currentTime + 0.05);
-            };
-
             const changeBpm = (newBpm) => {
-                setBpm(newBpm);
-                if (metronomeActive) {
-                    if (metronomeIntervalRef.current) {
-                        clearInterval(metronomeIntervalRef.current);
+                const bpmValue = parseInt(newBpm);
+                if (bpmValue >= 40 && bpmValue <= 240) {
+                    setBpm(bpmValue);
+                    if (metronomeActive && !isCountingIn) {
+                        if (metronomeTimeoutRef.current) {
+                            clearTimeout(metronomeTimeoutRef.current);
+                        }
+                        scheduleMetronome(currentBeat);
                     }
-                    const interval = (60 / newBpm) * 1000;
-                    metronomeIntervalRef.current = setInterval(() => {
-                        playMetronomeClick();
-                    }, interval);
                 }
             };
 
@@ -712,10 +788,28 @@
 
                         <div className="bg-white/10 backdrop-blur-lg rounded-xl p-6 mb-4">
                             <h3 className="text-white font-semibold mb-4">Metronom</h3>
+                            
+                            {isCountingIn && (
+                                <div className="mb-4 text-center">
+                                    <div className="text-yellow-400 text-2xl font-bold animate-pulse">
+                                        Inräkning: {currentBeat + 1} / {getBeatsPerMeasure()}
+                                    </div>
+                                </div>
+                            )}
+                            
+                            {metronomeActive && !isCountingIn && (
+                                <div className="mb-4 text-center">
+                                    <div className="text-green-400 text-lg font-semibold">
+                                        Taktslag: {(currentBeat % getBeatsPerMeasure()) + 1} / {getBeatsPerMeasure()}
+                                    </div>
+                                </div>
+                            )}
+                            
                             <div className="flex items-center gap-4 mb-3">
                                 <button
                                     onClick={toggleMetronome}
-                                    className={`${metronomeActive ? 'bg-red-500 hover:bg-red-600' : 'bg-gray-600 hover:bg-gray-700'} text-white py-2 px-6 rounded-lg font-semibold transition`}
+                                    disabled={isCountingIn}
+                                    className={`${metronomeActive ? 'bg-red-500 hover:bg-red-600' : 'bg-gray-600 hover:bg-gray-700'} disabled:bg-gray-500 text-white py-2 px-6 rounded-lg font-semibold transition`}
                                 >
                                     {metronomeActive ? '⏸ Stoppa' : '▶ Starta'}
                                 </button>
@@ -729,8 +823,48 @@
                                         onChange={(e) => changeBpm(parseInt(e.target.value))}
                                         className="flex-1"
                                     />
-                                    <span className="text-white font-semibold min-w-[40px]">{bpm}</span>
+                                    <input
+                                        type="number"
+                                        min="40"
+                                        max="240"
+                                        value={bpm}
+                                        onChange={(e) => changeBpm(e.target.value)}
+                                        className="bg-white/20 text-white px-2 py-1 rounded w-16 text-center border-2 border-blue-400 outline-none"
+                                    />
                                 </div>
+                            </div>
+                            
+                            <div className="flex items-center gap-4 mb-3">
+                                <span className="text-blue-200 text-sm min-w-[95px]">Tidssignatur:</span>
+                                <select
+                                    value={timeSignature}
+                                    onChange={(e) => setTimeSignature(e.target.value)}
+                                    disabled={metronomeActive || isCountingIn}
+                                    className="bg-white/20 text-white px-3 py-2 rounded border-2 border-blue-400 outline-none disabled:opacity-50"
+                                >
+                                    <option value="2/4">2/4</option>
+                                    <option value="3/4">3/4</option>
+                                    <option value="4/4">4/4</option>
+                                    <option value="5/4">5/4</option>
+                                    <option value="6/8">6/8</option>
+                                    <option value="7/8">7/8</option>
+                                    <option value="9/8">9/8</option>
+                                    <option value="12/8">12/8</option>
+                                </select>
+                            </div>
+                            
+                            <div className="flex items-center gap-3">
+                                <input
+                                    type="checkbox"
+                                    id="countIn"
+                                    checked={countIn}
+                                    onChange={(e) => setCountIn(e.target.checked)}
+                                    disabled={metronomeActive || isCountingIn}
+                                    className="w-4 h-4"
+                                />
+                                <label htmlFor="countIn" className="text-blue-200 text-sm cursor-pointer">
+                                    Inräkning vid inspelning (en takt)
+                                </label>
                             </div>
                         </div>
 
