@@ -96,6 +96,7 @@
             const [bpm, setBpm] = useState(120);
             const [currentTime, setCurrentTime] = useState(0);
             const [duration, setDuration] = useState(0);
+            const [recordingLevels, setRecordingLevels] = useState({});
             
             const mediaRecorderRef = useRef(null);
             const audioChunksRef = useRef([]);
@@ -107,6 +108,8 @@
             const playbackStartTimeRef = useRef(0);
             const pauseTimeRef = useRef(0);
             const animationFrameRef = useRef(null);
+            const analyserRef = useRef(null);
+            const animationIdRef = useRef(null);
 
             useEffect(() => {
                 audioContextRef.current = new (window.AudioContext || window.webkitAudioContext)();
@@ -119,6 +122,9 @@
                     }
                     if (animationFrameRef.current) {
                         cancelAnimationFrame(animationFrameRef.current);
+                    }
+                    if (animationIdRef.current) {
+                        cancelAnimationFrame(animationIdRef.current);
                     }
                 };
             }, []);
@@ -164,6 +170,28 @@
                     mediaRecorderRef.current = mediaRecorder;
                     audioChunksRef.current = [];
 
+                    // Skapa analyser för volymindikering
+                    const audioContext = audioContextRef.current;
+                    const source = audioContext.createMediaStreamSource(stream);
+                    const analyser = audioContext.createAnalyser();
+                    analyser.fftSize = 256;
+                    source.connect(analyser);
+                    analyserRef.current = analyser;
+
+                    const bufferLength = analyser.frequencyBinCount;
+                    const dataArray = new Uint8Array(bufferLength);
+
+                    const updateLevel = () => {
+                        if (analyserRef.current) {
+                            analyser.getByteFrequencyData(dataArray);
+                            const average = dataArray.reduce((a, b) => a + b) / bufferLength;
+                            const normalizedLevel = Math.min(100, (average / 255) * 200);
+                            setRecordingLevels(prev => ({ ...prev, [trackId]: normalizedLevel }));
+                            animationIdRef.current = requestAnimationFrame(updateLevel);
+                        }
+                    };
+                    updateLevel();
+
                     mediaRecorder.ondataavailable = (event) => {
                         if (event.data.size > 0) {
                             audioChunksRef.current.push(event.data);
@@ -171,16 +199,37 @@
                     };
 
                     mediaRecorder.onstop = async () => {
-                        const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
-                        const arrayBuffer = await audioBlob.arrayBuffer();
-                        const audioBuffer = await audioContextRef.current.decodeAudioData(arrayBuffer);
-                        audioBuffersRef.current[trackId] = audioBuffer;
+                        try {
+                            // Stoppa volymindikering
+                            if (animationIdRef.current) {
+                                cancelAnimationFrame(animationIdRef.current);
+                            }
+                            setRecordingLevels(prev => ({ ...prev, [trackId]: 0 }));
+                            
+                            const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
+                            console.log('Audio blob storlek:', audioBlob.size, 'bytes');
+                            
+                            const arrayBuffer = await audioBlob.arrayBuffer();
+                            console.log('ArrayBuffer storlek:', arrayBuffer.byteLength, 'bytes');
+                            
+                            const audioBuffer = await audioContextRef.current.decodeAudioData(arrayBuffer);
+                            console.log('Audio buffer decodad:', audioBuffer.duration, 'sekunder');
+                            
+                            audioBuffersRef.current[trackId] = audioBuffer;
 
-                        setTracks(prev => prev.map(t => 
-                            t.id === trackId ? { ...t, recording: false, hasAudio: true } : t
-                        ));
+                            setTracks(prev => prev.map(t => 
+                                t.id === trackId ? { ...t, recording: false, hasAudio: true } : t
+                            ));
 
-                        stream.getTracks().forEach(track => track.stop());
+                            stream.getTracks().forEach(track => track.stop());
+                            analyserRef.current = null;
+                        } catch (error) {
+                            console.error('Fel vid bearbetning av ljud:', error);
+                            alert('Kunde inte spara inspelningen: ' + error.message);
+                            setTracks(prev => prev.map(t => 
+                                t.id === trackId ? { ...t, recording: false } : t
+                            ));
+                        }
                     };
 
                     mediaRecorder.start();
@@ -206,54 +255,76 @@
             };
 
             const playAllTracks = async () => {
-                if (audioContextRef.current.state === 'suspended') {
-                    await audioContextRef.current.resume();
-                }
+                try {
+                    // Viktigt för iOS - resume audio context
+                    if (audioContextRef.current.state === 'suspended') {
+                        await audioContextRef.current.resume();
+                    }
 
-                const tracksWithAudio = tracks.filter(t => t.hasAudio);
-                if (tracksWithAudio.length === 0) return;
+                    const tracksWithAudio = tracks.filter(t => t.hasAudio);
+                    if (tracksWithAudio.length === 0) {
+                        console.log('Inga spår att spela');
+                        return;
+                    }
 
-                const startOffset = isPaused ? pauseTimeRef.current : currentTime;
-                
-                setIsPlaying(true);
-                setIsPaused(false);
-                playbackStartTimeRef.current = audioContextRef.current.currentTime - startOffset;
+                    const startOffset = isPaused ? pauseTimeRef.current : currentTime;
+                    
+                    console.log('Spelar spår:', tracksWithAudio.map(t => t.name));
+                    console.log('Start offset:', startOffset);
+                    
+                    setIsPlaying(true);
+                    setIsPaused(false);
+                    playbackStartTimeRef.current = audioContextRef.current.currentTime - startOffset;
 
-                tracksWithAudio.forEach(track => {
-                    const source = audioContextRef.current.createBufferSource();
-                    const gainNode = audioContextRef.current.createGain();
-                    
-                    source.buffer = audioBuffersRef.current[track.id];
-                    gainNode.gain.value = track.volume;
-                    
-                    source.connect(gainNode);
-                    gainNode.connect(audioContextRef.current.destination);
-                    
-                    sourceNodesRef.current[track.id] = source;
-                    gainNodesRef.current[track.id] = gainNode;
-                    
-                    source.onended = () => {
-                        delete sourceNodesRef.current[track.id];
-                        if (Object.keys(sourceNodesRef.current).length === 0) {
-                            setIsPlaying(false);
-                            setCurrentTime(0);
-                            pauseTimeRef.current = 0;
+                    tracksWithAudio.forEach(track => {
+                        const buffer = audioBuffersRef.current[track.id];
+                        if (!buffer) {
+                            console.error('Ingen buffer för spår', track.id);
+                            return;
+                        }
+
+                        const source = audioContextRef.current.createBufferSource();
+                        const gainNode = audioContextRef.current.createGain();
+                        
+                        source.buffer = buffer;
+                        gainNode.gain.value = track.volume;
+                        
+                        source.connect(gainNode);
+                        gainNode.connect(audioContextRef.current.destination);
+                        
+                        sourceNodesRef.current[track.id] = source;
+                        gainNodesRef.current[track.id] = gainNode;
+                        
+                        source.onended = () => {
+                            delete sourceNodesRef.current[track.id];
+                            if (Object.keys(sourceNodesRef.current).length === 0) {
+                                setIsPlaying(false);
+                                setCurrentTime(0);
+                                pauseTimeRef.current = 0;
+                            }
+                        };
+                        
+                        // Spela från rätt position
+                        const remainingDuration = buffer.duration - startOffset;
+                        if (remainingDuration > 0) {
+                            source.start(0, startOffset, remainingDuration);
+                        }
+                    });
+
+                    const updateTime = () => {
+                        if (audioContextRef.current && playbackStartTimeRef.current) {
+                            const elapsed = audioContextRef.current.currentTime - playbackStartTimeRef.current;
+                            setCurrentTime(Math.min(elapsed, duration));
+                            if (elapsed < duration) {
+                                animationFrameRef.current = requestAnimationFrame(updateTime);
+                            }
                         }
                     };
-                    
-                    source.start(0, startOffset);
-                });
-
-                const updateTime = () => {
-                    if (audioContextRef.current && playbackStartTimeRef.current) {
-                        const elapsed = audioContextRef.current.currentTime - playbackStartTimeRef.current;
-                        setCurrentTime(Math.min(elapsed, duration));
-                        if (elapsed < duration) {
-                            animationFrameRef.current = requestAnimationFrame(updateTime);
-                        }
-                    }
-                };
-                updateTime();
+                    updateTime();
+                } catch (error) {
+                    console.error('Fel vid uppspelning:', error);
+                    alert('Kunde inte spela upp ljud: ' + error.message);
+                }
             };
 
             const pausePlayback = () => {
@@ -545,8 +616,16 @@
                                     )}
                                     
                                     {track.recording && (
-                                        <div className="mt-2 text-red-400 text-sm font-semibold">
-                                            ● Spelar in...
+                                        <div className="mt-2">
+                                            <div className="flex items-center gap-2 mb-1">
+                                                <span className="text-red-400 text-sm font-semibold">● Spelar in...</span>
+                                            </div>
+                                            <div className="w-full bg-gray-700 rounded-full h-3 overflow-hidden">
+                                                <div 
+                                                    className="bg-gradient-to-r from-green-500 via-yellow-500 to-red-500 h-full transition-all duration-100"
+                                                    style={{ width: `${recordingLevels[track.id] || 0}%` }}
+                                                ></div>
+                                            </div>
                                         </div>
                                     )}
                                 </div>
