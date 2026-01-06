@@ -100,17 +100,17 @@
 
         function MultiTrackRecorder() {
             const [tracks, setTracks] = useState([
-                { id: 1, name: 'Spår 1', recording: false, hasAudio: false, volume: 0.8, editing: false, muted: false },
-                { id: 2, name: 'Spår 2', recording: false, hasAudio: false, volume: 0.8, editing: false, muted: false },
-                { id: 3, name: 'Spår 3', recording: false, hasAudio: false, volume: 0.8, editing: false, muted: false },
-                { id: 4, name: 'Spår 4', recording: false, hasAudio: false, volume: 0.8, editing: false, muted: false }
+                { id: 1, name: 'Spår 1', recording: false, hasAudio: false, volume: 1.0, editing: false, muted: false },
+                { id: 2, name: 'Spår 2', recording: false, hasAudio: false, volume: 1.0, editing: false, muted: false },
+                { id: 3, name: 'Spår 3', recording: false, hasAudio: false, volume: 1.0, editing: false, muted: false },
+                { id: 4, name: 'Spår 4', recording: false, hasAudio: false, volume: 1.0, editing: false, muted: false }
             ]);
             const [isPlaying, setIsPlaying] = useState(false);
             const [isPaused, setIsPaused] = useState(false);
             const [hasPermission, setHasPermission] = useState(false);
             const [metronomeActive, setMetronomeActive] = useState(false);
             const [metronomeEnabled, setMetronomeEnabled] = useState(false);
-            const [metronomeVolume, setMetronomeVolume] = useState(0.3);
+            const [metronomeVolume, setMetronomeVolume] = useState(0.8);
             const [bpm, setBpm] = useState(120);
             const [timeSignature, setTimeSignature] = useState('4/4');
             const [countIn, setCountIn] = useState(true);
@@ -227,32 +227,25 @@
                 
                 // Schemalägg klicket exakt i tid
                 const audioContext = audioContextRef.current;
-                const currentTime = audioContext.currentTime;
                 const clickTime = recordingStartTimeRef.current + (beatNumber * 60 / bpm);
                 
-                playMetronomeClickScheduled(isFirstBeat, clickTime);
+                const oscillator = audioContext.createOscillator();
+                const gainNode = audioContext.createGain();
+                
+                oscillator.connect(gainNode);
+                gainNode.connect(audioContext.destination);
+                
+                oscillator.frequency.value = isFirstBeat ? 1200 : 800;
+                gainNode.gain.value = isFirstBeat ? metronomeVolume * 1.5 : metronomeVolume;
+                
+                oscillator.start(clickTime);
+                gainNode.gain.exponentialRampToValueAtTime(0.01, clickTime + 0.05);
+                oscillator.stop(clickTime + 0.05);
                 
                 const interval = (60 / bpm) * 1000;
                 metronomeTimeoutRef.current = setTimeout(() => {
                     scheduleMetronome(beatNumber + 1);
                 }, interval);
-            };
-
-            const playMetronomeClickScheduled = (isFirstBeat, time) => {
-                const ctx = audioContextRef.current;
-                const oscillator = ctx.createOscillator();
-                const gainNode = ctx.createGain();
-                
-                oscillator.connect(gainNode);
-                // Koppla endast till destination (högtalare), INTE till inspelningen
-                gainNode.connect(ctx.destination);
-                
-                oscillator.frequency.value = isFirstBeat ? 1200 : 800;
-                gainNode.gain.value = isFirstBeat ? metronomeVolume * 1.5 : metronomeVolume;
-                
-                oscillator.start(time);
-                gainNode.gain.exponentialRampToValueAtTime(0.01, time + 0.05);
-                oscillator.stop(time + 0.05);
             };
 
             const startRecording = async (trackId) => {
