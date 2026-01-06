@@ -224,12 +224,34 @@
                 const isFirstBeat = beatNumber % beatsPerMeasure === 0;
                 
                 setCurrentBeat(beatNumber);
-                playMetronomeClick(isFirstBeat);
+                
+                // Schemalägg klicket exakt i tid
+                const audioContext = audioContextRef.current;
+                const currentTime = audioContext.currentTime;
+                const clickTime = recordingStartTimeRef.current + (beatNumber * 60 / bpm);
+                
+                playMetronomeClickScheduled(isFirstBeat, clickTime);
                 
                 const interval = (60 / bpm) * 1000;
                 metronomeTimeoutRef.current = setTimeout(() => {
                     scheduleMetronome(beatNumber + 1);
                 }, interval);
+            };
+
+            const playMetronomeClickScheduled = (isFirstBeat, time) => {
+                const ctx = audioContextRef.current;
+                const oscillator = ctx.createOscillator();
+                const gainNode = ctx.createGain();
+                
+                oscillator.connect(gainNode);
+                gainNode.connect(ctx.destination);
+                
+                oscillator.frequency.value = isFirstBeat ? 1200 : 800;
+                gainNode.gain.value = isFirstBeat ? metronomeVolume * 1.5 : metronomeVolume;
+                
+                oscillator.start(time);
+                gainNode.gain.exponentialRampToValueAtTime(0.01, time + 0.05);
+                oscillator.stop(time + 0.05);
             };
 
             const startRecording = async (trackId) => {
@@ -289,12 +311,19 @@
                     mediaRecorderRef.current = mediaRecorder;
                     audioChunksRef.current = [];
 
-                    // Skapa analyser för volymindikering
+                    // Skapa analyser för volymindikering och förstärkning
                     const audioContext = audioContextRef.current;
                     const source = audioContext.createMediaStreamSource(stream);
+                    
+                    // Lägg till en gainNode för att förstärka inspelningssignalen
+                    const inputGainNode = audioContext.createGain();
+                    inputGainNode.gain.value = 2.0; // Förstärk inspelningen med 2x
+                    
                     const analyser = audioContext.createAnalyser();
                     analyser.fftSize = 256;
-                    source.connect(analyser);
+                    
+                    source.connect(inputGainNode);
+                    inputGainNode.connect(analyser);
                     analyserRef.current = analyser;
 
                     const bufferLength = analyser.frequencyBinCount;
@@ -313,16 +342,19 @@
 
                     // Starta metronom synkad med inspelning om den är aktiverad
                     if (metronomeEnabled) {
-                        recordingStartTimeRef.current = Date.now();
+                        recordingStartTimeRef.current = audioContext.currentTime;
                         scheduleMetronome(0);
                     }
 
-                    // Spela upp andra spår samtidigt
+                    // Spela upp andra spår samtidigt, synkat med metronomens start
                     const otherTracks = tracks.filter(t => t.id !== trackId && t.hasAudio && !t.muted);
                     if (otherTracks.length > 0) {
                         if (audioContext.state === 'suspended') {
                             await audioContext.resume();
                         }
+
+                        // Synka uppspelningen med metronomen
+                        const startTime = metronomeEnabled ? recordingStartTimeRef.current : audioContext.currentTime;
 
                         otherTracks.forEach(track => {
                             const buffer = audioBuffersRef.current[track.id];
@@ -339,7 +371,8 @@
                             
                             recordingPlaybackNodesRef.current[track.id] = { source, gainNode };
                             
-                            source.start(0);
+                            // Starta vid exakt samma tid som metronomen
+                            source.start(startTime);
                         });
                     }
 
@@ -378,8 +411,11 @@
                             const arrayBuffer = await audioBlob.arrayBuffer();
                             console.log('ArrayBuffer storlek:', arrayBuffer.byteLength, 'bytes');
                             
-                            const audioBuffer = await audioContextRef.current.decodeAudioData(arrayBuffer);
+                            let audioBuffer = await audioContextRef.current.decodeAudioData(arrayBuffer);
                             console.log('Audio buffer decodad:', audioBuffer.duration, 'sekunder');
+                            
+                            // Förstärk det inspelade ljudet
+                            audioBuffer = amplifyAudioBuffer(audioBuffer, 2.0);
                             
                             audioBuffersRef.current[trackId] = audioBuffer;
 
@@ -405,6 +441,26 @@
                 } catch (err) {
                     alert('Fel vid inspelning: ' + err.message);
                 }
+            };
+
+            const amplifyAudioBuffer = (buffer, gain) => {
+                const newBuffer = audioContextRef.current.createBuffer(
+                    buffer.numberOfChannels,
+                    buffer.length,
+                    buffer.sampleRate
+                );
+
+                for (let channel = 0; channel < buffer.numberOfChannels; channel++) {
+                    const inputData = buffer.getChannelData(channel);
+                    const outputData = newBuffer.getChannelData(channel);
+                    
+                    for (let i = 0; i < buffer.length; i++) {
+                        // Förstärk men begränsa till -1 till 1 för att undvika distorsion
+                        outputData[i] = Math.max(-1, Math.min(1, inputData[i] * gain));
+                    }
+                }
+
+                return newBuffer;
             };
 
             const stopRecording = () => {
