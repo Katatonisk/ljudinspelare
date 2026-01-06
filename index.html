@@ -110,6 +110,7 @@
             const [hasPermission, setHasPermission] = useState(false);
             const [metronomeActive, setMetronomeActive] = useState(false);
             const [metronomeEnabled, setMetronomeEnabled] = useState(false);
+            const [metronomeVolume, setMetronomeVolume] = useState(0.3);
             const [bpm, setBpm] = useState(120);
             const [timeSignature, setTimeSignature] = useState('4/4');
             const [countIn, setCountIn] = useState(true);
@@ -138,6 +139,10 @@
 
             useEffect(() => {
                 audioContextRef.current = new (window.AudioContext || window.webkitAudioContext)();
+                
+                // Stäng av automatisk volymjustering (AGC, echo cancellation, noise suppression)
+                // Detta görs när vi begär mikrofon-tillgång
+                
                 return () => {
                     if (audioContextRef.current) {
                         audioContextRef.current.close();
@@ -176,7 +181,13 @@
 
             const requestMicrophonePermission = async () => {
                 try {
-                    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                    const stream = await navigator.mediaDevices.getUserMedia({ 
+                        audio: {
+                            echoCancellation: false,
+                            noiseSuppression: false,
+                            autoGainControl: false
+                        } 
+                    });
                     stream.getTracks().forEach(track => track.stop());
                     setHasPermission(true);
                     return true;
@@ -199,9 +210,9 @@
                 oscillator.connect(gainNode);
                 gainNode.connect(ctx.destination);
                 
-                // Högre frekvens och volym för första slaget
+                // Högre frekvens för första slaget, justera volym baserat på inställning
                 oscillator.frequency.value = isFirstBeat ? 1200 : 800;
-                gainNode.gain.value = isFirstBeat ? 0.5 : 0.3;
+                gainNode.gain.value = isFirstBeat ? metronomeVolume * 1.5 : metronomeVolume;
                 
                 oscillator.start(ctx.currentTime);
                 gainNode.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.05);
@@ -267,7 +278,13 @@
                 }
 
                 try {
-                    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                    const stream = await navigator.mediaDevices.getUserMedia({ 
+                        audio: {
+                            echoCancellation: false,
+                            noiseSuppression: false,
+                            autoGainControl: false
+                        } 
+                    });
                     const mediaRecorder = new MediaRecorder(stream);
                     mediaRecorderRef.current = mediaRecorder;
                     audioChunksRef.current = [];
@@ -809,6 +826,20 @@
                                 <div className="text-blue-200 text-sm">
                                     {metronomeEnabled ? 'Startar vid inspelning' : 'Klicka för att aktivera'}
                                 </div>
+                            </div>
+                            
+                            <div className="flex items-center gap-3 mb-3">
+                                <span className="text-blue-200 text-sm min-w-[60px]">Volym:</span>
+                                <input
+                                    type="range"
+                                    min="0"
+                                    max="1"
+                                    step="0.05"
+                                    value={metronomeVolume}
+                                    onChange={(e) => setMetronomeVolume(parseFloat(e.target.value))}
+                                    className="flex-1"
+                                />
+                                <span className="text-white text-sm min-w-[35px]">{Math.round(metronomeVolume * 100)}%</span>
                             </div>
                             
                             <div className="flex items-center gap-4 mb-3">
